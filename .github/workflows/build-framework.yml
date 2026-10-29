@@ -18,6 +18,7 @@ jobs:
 
       - name: Build framework
         run: |
+          set -o pipefail
           xcodebuild \
             -project PlayTools.xcodeproj \
             -scheme PlayTools \
@@ -25,7 +26,12 @@ jobs:
             -destination 'generic/platform=macOS,variant=Mac Catalyst' \
             -derivedDataPath "$DERIVED_DATA" \
             CODE_SIGNING_ALLOWED=NO \
-            build
+            build 2>&1 | tee build.log || {
+              # Surface compiler errors as annotations, which are readable without signing in
+              grep -E "error:|\*\* BUILD FAILED" build.log | sort -u | head -40 \
+                | sed 's/%/%25/g' | sed 's/^/::error::/'
+              exit 1
+            }
 
       - name: List build products
         if: always()
