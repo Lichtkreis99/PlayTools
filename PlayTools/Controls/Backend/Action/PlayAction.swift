@@ -298,6 +298,110 @@ class JoystickAction: Action {
     }
 }
 
+class SwipeGroupAction: Action {
+    let center: CGPoint
+    let points: [CGPoint]
+    let keys: [SwipeKey]
+    let swipeDelay: CGFloat
+    private var id: Int?
+    private var pressedOrder = [Int]()
+    private var currentPoint: CGPoint
+    private var currentKeyName = "Keyboard"
+    private var moveGeneration = 0
+
+    init(data: SwipeGroup) {
+        center = CGPoint(
+            x: data.transform.xCoord.absoluteX,
+            y: data.transform.yCoord.absoluteY)
+        points = data.keys.map { key in
+            CGPoint(
+                x: key.transform.xCoord.absoluteX,
+                y: key.transform.yCoord.absoluteY)
+        }
+        keys = data.keys
+        swipeDelay = max(0, data.swipeDelay ?? 0)
+        currentPoint = center
+
+        for (index, key) in keys.enumerated() {
+            let codeName = KeyCodeNames.keyCodes[key.keyCode] ?? key.keyName
+            let dispatchKey = key.keyCode == KeyCodeNames.defaultCode ? key.keyName : codeName
+            ActionDispatcher.register(key: dispatchKey, handler: getPressedHandler(index: index))
+        }
+    }
+
+    func getPressedHandler(index: Int) -> (Bool) -> Void {
+        { pressed in
+            self.update(index: index, pressed: pressed)
+        }
+    }
+
+    func update(index: Int, pressed: Bool) {
+        let previousIndex = pressedOrder.last
+        pressedOrder.removeAll(where: { $0 == index })
+        if pressed {
+            pressedOrder.append(index)
+        }
+
+        guard previousIndex != pressedOrder.last else {
+            return
+        }
+        if let targetIndex = pressedOrder.last {
+            move(to: targetIndex)
+        } else {
+            liftOff()
+        }
+    }
+
+    private func move(to index: Int) {
+        let target = points[index]
+        currentPoint = target
+        currentKeyName = keys[index].keyName
+        moveGeneration += 1
+
+        if id != nil {
+            Toucher.touchcam(point: target, phase: UITouch.Phase.moved, tid: &id,
+                             actionName: "SwipeGroup", keyName: currentKeyName)
+            return
+        }
+
+        Toucher.touchcam(point: center, phase: UITouch.Phase.began, tid: &id,
+                         actionName: "SwipeGroup", keyName: currentKeyName)
+        let generation = moveGeneration
+        if swipeDelay == 0 {
+            moveAfterBegan(to: target, index: index, generation: generation)
+        } else {
+            PlayInput.touchQueue.asyncAfter(
+                deadline: .now() + Double(swipeDelay), qos: .userInitiated) {
+                    self.moveAfterBegan(to: target, index: index, generation: generation)
+                }
+        }
+    }
+
+    private func moveAfterBegan(to point: CGPoint, index: Int, generation: Int) {
+        guard id != nil,
+              moveGeneration == generation,
+              pressedOrder.last == index else {
+            return
+        }
+        Toucher.touchcam(point: point, phase: UITouch.Phase.moved, tid: &id,
+                         actionName: "SwipeGroup", keyName: currentKeyName)
+    }
+
+    private func liftOff() {
+        moveGeneration += 1
+        guard id != nil else {
+            return
+        }
+        Toucher.touchcam(point: currentPoint, phase: UITouch.Phase.ended, tid: &id,
+                         actionName: "SwipeGroup", keyName: currentKeyName)
+    }
+
+    func invalidate() {
+        pressedOrder.removeAll()
+        liftOff()
+    }
+}
+
 class CameraAction: Action {
     var swipeMove, swipeScale1, swipeScale2: SwipeAction
     static var swipeDrag = SwipeAction(actionName: "Drag", keyName: "ScrollWheel")

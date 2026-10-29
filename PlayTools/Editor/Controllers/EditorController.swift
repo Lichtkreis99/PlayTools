@@ -25,6 +25,9 @@ class EditorController {
     private func addControlToView(control: ControlElement) {
         controls.append(control)
         view.addSubview(control.button)
+        if let swipeGroup = control as? SwipeGroupModel {
+            swipeGroup.attachChildren(to: view)
+        }
         updateFocus(button: control.button)
     }
 
@@ -93,6 +96,7 @@ class EditorController {
     public func removeControl() {
         controls = controls.filter { $0 !== focusedControl }
         focusedControl?.remove()
+        focusedControl = nil
     }
 
     func showButtons() {
@@ -113,10 +117,15 @@ class EditorController {
             let ctrl = ButtonModel(data: button)
             addControlToView(control: ctrl)
         }
+        for swipeGroup in keymap.currentKeymap.swipeGroupModels ?? [] {
+            let ctrl = SwipeGroupModel(data: swipeGroup)
+            addControlToView(control: ctrl)
+        }
     }
 
     func saveButtons() {
         var keymapData = KeymappingData(bundleIdentifier: keymap.bundleIdentifier)
+        keymapData.swipeGroupModels = []
         controls.forEach {
             switch $0 {
             case let model as JoystickModel:
@@ -128,11 +137,15 @@ class EditorController {
                 keymapData.mouseAreaModel.append(model.save())
             case let model as ButtonModel:
                 keymapData.buttonModels.append(model.save())
+            case let model as SwipeGroupModel:
+                keymapData.swipeGroupModels?.append(model.save())
             default:
                 break
             }
         }
         keymap.currentKeymap = keymapData
+        focusedControl = nil
+        controls.forEach { $0.remove() }
         controls = []
         view.subviews.forEach { $0.removeFromSuperview() }
     }
@@ -200,6 +213,17 @@ class EditorController {
                 transform: KeyModelTransform(
                     size: 25, xCoord: center.x.relativeX, yCoord: center.y.relativeY
                 )
+            )))
+        }
+    }
+
+    public func addSwipeGroup(_ center: CGPoint) {
+        if editorMode {
+            addControlToView(control: SwipeGroupModel(data: SwipeGroup(
+                transform: KeyModelTransform(
+                    size: 8, xCoord: center.x.relativeX, yCoord: center.y.relativeY),
+                keys: [],
+                swipeDelay: nil
             )))
         }
     }

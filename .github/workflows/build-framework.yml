@@ -1,0 +1,49 @@
+name: Build PlayTools Framework
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-framework:
+    runs-on: macos-latest
+    env:
+      FASTLANE: 1
+      DERIVED_DATA: ${{ runner.temp }}/PlayToolsDerivedData
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build framework
+        run: |
+          xcodebuild \
+            -project PlayTools.xcodeproj \
+            -scheme PlayTools \
+            -configuration Release \
+            -destination 'generic/platform=macOS,variant=Mac Catalyst' \
+            -derivedDataPath "$DERIVED_DATA" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: List build products
+        if: always()
+        run: |
+          find "$DERIVED_DATA" -type d \
+            \( -name '*.framework' -o -name '*.bundle' \) -print
+
+      - name: Package framework
+        run: |
+          framework_path="$(find "$DERIVED_DATA/Build/Products/Release-maccatalyst" \
+            -type d -name PlayTools.framework -print -quit)"
+          test -n "$framework_path"
+          test -d "$framework_path/PlugIns/AKInterface.bundle"
+          ditto -c -k --keepParent "$framework_path" PlayTools.framework.zip
+
+      - name: Upload framework
+        uses: actions/upload-artifact@v4
+        with:
+          name: PlayTools-framework
+          path: PlayTools.framework.zip
+          if-no-files-found: error

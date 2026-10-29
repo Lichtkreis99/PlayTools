@@ -87,6 +87,10 @@ public class ActionDispatcher {
                 actions.append(JoystickAction(data: joystick))
             }
         }
+
+        for swipeGroup in keymap.currentKeymap.swipeGroupModels ?? [] {
+            actions.append(SwipeGroupAction(data: swipeGroup))
+        }
         // `cursorHideNecessary` is used to disable `option` toggle when there is no mouse mapping
         // but in the case this new feature disabled, `option` should always function.
         // this variable is set here to be checked for mouse mapping later.
@@ -166,7 +170,7 @@ public class ActionDispatcher {
     */
     static public func invalidateNonButtonActions() {
         for action in actions
-        where !(action is ButtonAction || action is JoystickAction) {
+        where !(action is ButtonAction || action is JoystickAction || action is SwipeGroupAction) {
             action.invalidate()
         }
     }

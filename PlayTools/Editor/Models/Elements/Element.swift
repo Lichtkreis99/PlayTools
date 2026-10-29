@@ -49,14 +49,15 @@ struct MouseArea: BaseElement {
     }
 }
 
-// This is currently not stored
-// Prepare to add swipe mapping
-// Swipe mapping starts from a user-defined pos,
-// and move to a user-defined pos (polar coordinate system defined by size and angle)
-// and end.
-struct Swipe: BaseElement {
+struct SwipeKey: BaseElement {
+    var keyCode: Int
     var keyName: String
     var transform: KeyModelTransform
-    // [0, 2 * PI)
-    var angle: CGFloat
+}
+
+struct SwipeGroup: BaseElement {
+    var keyName: String = "Keyboard"
+    var transform: KeyModelTransform
+    var keys: [SwipeKey]
+    var swipeDelay: CGFloat?
 }
