@@ -157,7 +157,8 @@ __attribute__((visibility("hidden")))
     return NO;
 }
 
-- (void) hook_setCurrentSubscription:(VSSubscription *)currentSubscription {
+// `id` instead of VSSubscription: newer SDKs mark that class unavailable on Mac Catalyst
+- (void) hook_setCurrentSubscription:(id)currentSubscription {
     // do nothing
 }
 
