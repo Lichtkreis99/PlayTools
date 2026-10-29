@@ -136,16 +136,20 @@ class SwipeGroupModel: ControlModel<SwipeGroup>, ParentElement {
 class SwipeKeyModel: ControlModel<SwipeKey> {
     unowned let parent: SwipeGroupModel
     private let lineLayer = CAShapeLayer()
+    private var dragPosition: CGPoint
 
     init(data: SwipeKey, parent: SwipeGroupModel) {
         self.parent = parent
+        dragPosition = CGPoint(
+            x: data.transform.xCoord.absoluteX,
+            y: data.transform.yCoord.absoluteY)
         super.init(data: data)
-        button.backgroundColor = UIColor.systemTeal.withAlphaComponent(0.8)
         setKey(code: data.keyCode, name: data.keyName)
         lineLayer.strokeColor = UIColor.systemTeal.withAlphaComponent(0.8).cgColor
         lineLayer.fillColor = UIColor.clear.cgColor
         lineLayer.lineWidth = 2
         lineLayer.lineDashPattern = [6, 4]
+        updatePosition()
     }
 
     func attach(to view: UIView) {
@@ -166,26 +170,19 @@ class SwipeKeyModel: ControlModel<SwipeKey> {
     }
 
     override func move(deltaY: CGFloat, deltaX: CGFloat) {
-        var newCenter = button.center
-        if newCenter.x + deltaX > 0 && newCenter.x + deltaX < screen.width {
-            newCenter.x += deltaX
-            data.transform.xCoord = newCenter.x.relativeX
+        if dragPosition.x + deltaX > 0 && dragPosition.x + deltaX < screen.width {
+            dragPosition.x += deltaX
         }
-        if newCenter.y + deltaY > 0 && newCenter.y + deltaY < screen.height {
-            newCenter.y += deltaY
-            data.transform.yCoord = newCenter.y.relativeY
+        if dragPosition.y + deltaY > 0 && dragPosition.y + deltaY < screen.height {
+            dragPosition.y += deltaY
         }
-        button.setCenterXY(newX: newCenter.x, newY: newCenter.y)
-        updateLine()
+        updatePosition()
     }
 
     func moveWithParent(deltaY: CGFloat, deltaX: CGFloat) {
-        let newX = button.center.x + deltaX
-        let newY = button.center.y + deltaY
-        data.transform.xCoord = newX.relativeX
-        data.transform.yCoord = newY.relativeY
-        button.setCenterXY(newX: newX, newY: newY)
-        updateLine()
+        dragPosition.x += deltaX
+        dragPosition.y += deltaY
+        updatePosition()
     }
 
     override func resize(down: Bool) {
@@ -215,5 +212,20 @@ class SwipeKeyModel: ControlModel<SwipeKey> {
         path.move(to: parent.button.center)
         path.addLine(to: button.center)
         lineLayer.path = path.cgPath
+    }
+
+    private func updatePosition() {
+        let center = parent.button.center
+        let radius = max(parent.button.frame.width / 2, 20)
+        let distance = hypot(dragPosition.x - center.x, dragPosition.y - center.y)
+        let isReturnKey = distance < radius
+        let displayedPosition = isReturnKey ? center : dragPosition
+        data.transform.xCoord = displayedPosition.x.relativeX
+        data.transform.yCoord = displayedPosition.y.relativeY
+        button.setCenterXY(newX: displayedPosition.x, newY: displayedPosition.y)
+        button.backgroundColor = (isReturnKey ? UIColor.systemOrange : UIColor.systemTeal)
+            .withAlphaComponent(0.8)
+        lineLayer.isHidden = isReturnKey
+        updateLine()
     }
 }

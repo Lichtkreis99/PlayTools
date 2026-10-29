@@ -303,11 +303,14 @@ class SwipeGroupAction: Action {
     let points: [CGPoint]
     let keys: [SwipeKey]
     let swipeDelay: CGFloat
+    let swipeDuration: CGFloat
+    let swipeSteps: Int
     private var id: Int?
     private var pressedOrder = [Int]()
     private var currentPoint: CGPoint
     private var currentKeyName = "Keyboard"
     private var moveGeneration = 0
+    private var animationPending = false
 
     init(data: SwipeGroup) {
         center = CGPoint(
@@ -319,7 +322,9 @@ class SwipeGroupAction: Action {
                 y: key.transform.yCoord.absoluteY)
         }
         keys = data.keys
-        swipeDelay = max(0, data.swipeDelay ?? 0)
+        swipeDelay = max(0, data.swipeDelay ?? 0.03)
+        swipeDuration = max(0, data.swipeDuration ?? 0.06)
+        swipeSteps = max(1, data.swipeSteps ?? 6)
         currentPoint = center
 
         for (index, key) in keys.enumerated() {
@@ -354,41 +359,73 @@ class SwipeGroupAction: Action {
 
     private func move(to index: Int) {
         let target = points[index]
-        currentPoint = target
         currentKeyName = keys[index].keyName
         moveGeneration += 1
+        animationPending = true
+        let generation = moveGeneration
 
-        if id != nil {
-            Toucher.touchcam(point: target, phase: UITouch.Phase.moved, tid: &id,
+        if id == nil {
+            currentPoint = center
+            Toucher.touchcam(point: center, phase: UITouch.Phase.began, tid: &id,
                              actionName: "SwipeGroup", keyName: currentKeyName)
+            scheduleMove(to: target, generation: generation, delay: swipeDelay)
+        } else {
+            scheduleMove(to: target, generation: generation, delay: 0)
+        }
+    }
+
+    private func scheduleMove(to target: CGPoint, generation: Int, delay: CGFloat) {
+        let start = currentPoint
+        if swipeDuration == 0 {
+            scheduleStep(to: target, generation: generation, delay: delay, isLast: true)
             return
         }
+        for step in 1...swipeSteps {
+            let progress = CGFloat(step) / CGFloat(swipeSteps)
+            let point = CGPoint(
+                x: start.x + (target.x - start.x) * progress,
+                y: start.y + (target.y - start.y) * progress)
+            let stepDelay = delay + swipeDuration * progress
+            scheduleStep(
+                to: point, generation: generation, delay: stepDelay, isLast: step == swipeSteps)
+        }
+    }
 
-        Toucher.touchcam(point: center, phase: UITouch.Phase.began, tid: &id,
-                         actionName: "SwipeGroup", keyName: currentKeyName)
-        let generation = moveGeneration
-        if swipeDelay == 0 {
-            moveAfterBegan(to: target, index: index, generation: generation)
+    private func scheduleStep(to point: CGPoint, generation: Int, delay: CGFloat, isLast: Bool) {
+        if delay == 0 {
+            moveStep(to: point, generation: generation, isLast: isLast)
         } else {
             PlayInput.touchQueue.asyncAfter(
-                deadline: .now() + Double(swipeDelay), qos: .userInitiated) {
-                    self.moveAfterBegan(to: target, index: index, generation: generation)
+                deadline: .now() + Double(delay), qos: .userInitiated) {
+                    self.moveStep(to: point, generation: generation, isLast: isLast)
                 }
         }
     }
 
-    private func moveAfterBegan(to point: CGPoint, index: Int, generation: Int) {
+    private func moveStep(to point: CGPoint, generation: Int, isLast: Bool) {
         guard id != nil,
-              moveGeneration == generation,
-              pressedOrder.last == index else {
+              moveGeneration == generation else {
             return
         }
+        currentPoint = point
         Toucher.touchcam(point: point, phase: UITouch.Phase.moved, tid: &id,
                          actionName: "SwipeGroup", keyName: currentKeyName)
+        if isLast {
+            animationPending = false
+            if pressedOrder.isEmpty {
+                endTouch()
+            }
+        }
     }
 
     private func liftOff() {
-        moveGeneration += 1
+        guard !animationPending else {
+            return
+        }
+        endTouch()
+    }
+
+    private func endTouch() {
         guard id != nil else {
             return
         }
@@ -398,7 +435,9 @@ class SwipeGroupAction: Action {
 
     func invalidate() {
         pressedOrder.removeAll()
-        liftOff()
+        moveGeneration += 1
+        animationPending = false
+        endTouch()
     }
 }
 

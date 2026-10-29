@@ -60,4 +60,6 @@ struct SwipeGroup: BaseElement {
     var transform: KeyModelTransform
     var keys: [SwipeKey]
     var swipeDelay: CGFloat?
+    var swipeDuration: CGFloat?
+    var swipeSteps: Int?
 }

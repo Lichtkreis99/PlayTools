@@ -223,7 +223,9 @@ class EditorController {
                 transform: KeyModelTransform(
                     size: 8, xCoord: center.x.relativeX, yCoord: center.y.relativeY),
                 keys: [],
-                swipeDelay: nil
+                swipeDelay: nil,
+                swipeDuration: nil,
+                swipeSteps: nil
             )))
         }
     }
