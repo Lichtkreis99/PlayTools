@@ -12,7 +12,7 @@ jobs:
     runs-on: macos-latest
     env:
       FASTLANE: 1
-      DERIVED_DATA: ${{ runner.temp }}/PlayToolsDerivedData
+      DERIVED_DATA: ${{ github.workspace }}/DerivedData
     steps:
       - uses: actions/checkout@v4
 
