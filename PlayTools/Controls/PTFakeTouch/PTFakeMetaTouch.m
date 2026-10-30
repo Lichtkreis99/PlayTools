@@ -18,6 +18,9 @@
 #include <string.h>
 
 static NSMutableArray *livingTouchAry;
+// Touches whose "ended"/"cancelled" has already reached the app. UIKit reports a lift once;
+// sending it again with every later event makes some game modes drop the next touch.
+static NSMutableSet *liftDeliveredTouches;
 atomic_ullong reusageMask = ATOMIC_VAR_INIT(0);
 // Deliveries started / finished, so callers can tell whether a state change has reached the app
 static atomic_ulong deliveryStartCounter = ATOMIC_VAR_INIT(0);
@@ -39,6 +42,10 @@ void eventSendCallback(void* info) {
         switch (aTouch.phase) {
             case UITouchPhaseEnded:
             case UITouchPhaseCancelled:
+                if ([liftDeliveredTouches containsObject:aTouch]) {
+                    return;
+                }
+                [liftDeliveredTouches addObject:aTouch];
                 // set this bit to 1
                 atomic_fetch_or(&reusageMask, 1ull<<idx);
                 break;
@@ -141,6 +148,7 @@ static void installTouchLogIfEnabled(void) {
 
 + (void)load {
     livingTouchAry = [[NSMutableArray alloc] init];
+    liftDeliveredTouches = [[NSMutableSet alloc] init];
     CFRunLoopSourceContext context;
     memset(&context, 0, sizeof(CFRunLoopSourceContext));
     context.perform = eventSendCallback;
@@ -202,6 +210,9 @@ static void installTouchLogIfEnabled(void) {
             // These must be locked together, because otherwise
             // After we occupy this id, other thread may release it again,
             // before we actually replace the UITouch
+        }
+        if (pointId < [livingTouchAry count]) {
+            [liftDeliveredTouches removeObject:livingTouchAry[pointId]];
         }
         [livingTouchAry setObject:touch atIndexedSubscript:pointId];
         [lock unlock];
