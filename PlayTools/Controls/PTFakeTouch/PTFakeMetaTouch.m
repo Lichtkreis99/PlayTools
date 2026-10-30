@@ -12,6 +12,7 @@
 #import "UIEvent+Private.h"
 #import "CoreFoundation/CFRunLoop.h"
 #import <QuartzCore/QuartzCore.h>
+#import <objc/runtime.h>
 #import <stdatomic.h>
 #include <dlfcn.h>
 #include <string.h>
@@ -69,6 +70,58 @@ void eventSendCallback(void* info) {
     atomic_fetch_add(&deliveryCounter, 1);
 }
 
+// Diagnostic log of every touch event the app receives, native or fake. Enabled only when
+// Documents/playtools-touchlog.enabled exists; written to Documents/playtools-touch.log.
+static IMP originalSendEvent;
+static FILE *touchLogFile;
+static dispatch_queue_t touchLogQueue;
+
+static void loggingSendEvent(id self, SEL _cmd, UIEvent *event) {
+    if (event.type == UIEventTypeTouches) {
+        NSUInteger frame = atomic_load(&frameCounter);
+        CFTimeInterval now = CACurrentMediaTime();
+        NSMutableString *line = [NSMutableString string];
+        for (UITouch *touch in event.allTouches) {
+            [lock lock];
+            BOOL fake = [livingTouchAry indexOfObjectIdenticalTo:touch] != NSNotFound;
+            [lock unlock];
+            CGPoint loc = [touch locationInView:nil];
+            CGPoint prev = [touch previousLocationInView:nil];
+            NSMutableArray *recognizers = [NSMutableArray array];
+            for (UIGestureRecognizer *recognizer in touch.gestureRecognizers) {
+                [recognizers addObject:NSStringFromClass([recognizer class])];
+            }
+            [line appendFormat:@"%.4f f=%lu ev=%.4f %@ %p ph=%ld t=%.4f loc=%.1f,%.1f prev=%.1f,%.1f "
+                                "type=%ld tap=%lu r=%.1f force=%.2f view=%@ win=%p gr=[%@]\n",
+             now, (unsigned long)frame, event.timestamp, fake ? @"FAKE" : @"NATIVE", touch,
+             (long)touch.phase, touch.timestamp, loc.x, loc.y, prev.x, prev.y,
+             (long)touch.type, (unsigned long)touch.tapCount, touch.majorRadius, touch.force,
+             NSStringFromClass([touch.view class]), touch.window,
+             [recognizers componentsJoinedByString:@","]];
+        }
+        dispatch_async(touchLogQueue, ^{
+            fputs(line.UTF8String, touchLogFile);
+            fflush(touchLogFile);
+        });
+    }
+    ((void (*)(id, SEL, UIEvent *))originalSendEvent)(self, _cmd, event);
+}
+
+static void installTouchLogIfEnabled(void) {
+    NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+    NSString *flag = [docs stringByAppendingPathComponent:@"playtools-touchlog.enabled"];
+    if (docs == nil || ![[NSFileManager defaultManager] fileExistsAtPath:flag]) {
+        return;
+    }
+    touchLogFile = fopen([docs stringByAppendingPathComponent:@"playtools-touch.log"].fileSystemRepresentation, "a");
+    if (touchLogFile == NULL) {
+        return;
+    }
+    touchLogQueue = dispatch_queue_create("playtools.touchlog", DISPATCH_QUEUE_SERIAL);
+    Method method = class_getInstanceMethod([UIApplication class], @selector(sendEvent:));
+    originalSendEvent = method_setImplementation(method, (IMP)loggingSendEvent);
+}
+
 @interface PTFrameTicker : NSObject
 @end
 
@@ -90,6 +143,7 @@ void eventSendCallback(void* info) {
     source = CFRunLoopSourceCreate(NULL, -2, &context);
     CFRunLoopRef loop = CFRunLoopGetMain();
     CFRunLoopAddSource(loop, source, kCFRunLoopCommonModes);
+    installTouchLogIfEnabled();
     // Created once the main run loop is running; the display link retains its target
     dispatch_async(dispatch_get_main_queue(), ^{
         CADisplayLink *link = [CADisplayLink displayLinkWithTarget:[[PTFrameTicker alloc] init]
