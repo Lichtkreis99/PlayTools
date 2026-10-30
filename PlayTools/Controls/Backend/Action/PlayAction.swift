@@ -390,10 +390,30 @@ class SwipeGroupAction: Action {
 
         if id == nil {
             currentPoint = center
-            sendTouch(point: center, phase: .began,
-                      minimumDelay: swipeDelay + stepInterval, frames: 1)
+            sendTouch(point: center, phase: .began, minimumDelay: stepInterval, frames: 1)
+            scheduleSettle(until: DispatchTime.now() + Double(swipeDelay),
+                           target: target, generation: generation)
+            return
         }
         scheduleMove(to: target, generation: generation)
+    }
+
+    // Rests on the center for swipeDelay before dragging. Like a real finger, it is never perfectly
+    // still: some controls only follow a drag after they have seen moves at the press point.
+    private func scheduleSettle(until deadline: DispatchTime, target: CGPoint, generation: Int) {
+        guard let gate = lastDeliveryGate else {
+            return
+        }
+        wait(for: gate, generation: generation) {
+            if DispatchTime.now() >= deadline {
+                self.scheduleMove(to: target, generation: generation)
+                return
+            }
+            self.jitter = -self.jitter
+            self.currentPoint = CGPoint(x: self.center.x + self.jitter, y: self.center.y)
+            self.sendTouch(point: self.currentPoint, phase: .moved, minimumDelay: 0, frames: 1)
+            self.scheduleSettle(until: deadline, target: target, generation: generation)
+        }
     }
 
     private var stepInterval: CGFloat {
