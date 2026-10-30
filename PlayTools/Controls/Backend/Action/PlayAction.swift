@@ -298,7 +298,18 @@ class JoystickAction: Action {
     }
 }
 
+private struct TouchDeliveryGate {
+    // Value of deliveryStartCount right after the change; delivered once deliveryCount exceeds it
+    let deliveryCount: UInt
+    let earliestTime: DispatchTime
+    let timeout: DispatchTime
+}
+
 class SwipeGroupAction: Action {
+    private static let deliveryPollInterval = 0.004
+    private static let deliveryTimeout = 1.0
+    private static let redeliveryInterval = 0.016
+
     let center: CGPoint
     let points: [CGPoint]
     let keys: [SwipeKey]
@@ -311,6 +322,7 @@ class SwipeGroupAction: Action {
     private var currentKeyName = "Keyboard"
     private var moveGeneration = 0
     private var animationPending = false
+    private var lastDeliveryGate: TouchDeliveryGate?
 
     init(data: SwipeGroup) {
         center = CGPoint(
@@ -366,55 +378,56 @@ class SwipeGroupAction: Action {
 
         if id == nil {
             currentPoint = center
-            Toucher.touchcam(point: center, phase: UITouch.Phase.began, tid: &id,
-                             actionName: "SwipeGroup", keyName: currentKeyName)
-            scheduleMove(to: target, generation: generation, delay: swipeDelay)
-        } else {
-            scheduleMove(to: target, generation: generation, delay: 0)
+            sendTouch(point: center, phase: .began,
+                      minimumDelay: swipeDelay + stepInterval)
         }
+        scheduleMove(to: target, generation: generation)
     }
 
-    private func scheduleMove(to target: CGPoint, generation: Int, delay: CGFloat) {
+    private var stepInterval: CGFloat {
+        swipeDuration / CGFloat(swipeSteps)
+    }
+
+    private func scheduleMove(to target: CGPoint, generation: Int) {
         let start = currentPoint
         if swipeDuration == 0 {
-            scheduleStep(to: target, generation: generation, delay: delay, isLast: true)
+            scheduleStep(points: [target], index: 0, generation: generation)
             return
         }
-        for step in 1...swipeSteps {
+
+        let stepPoints = (1...swipeSteps).map { step -> CGPoint in
             let progress = CGFloat(step) / CGFloat(swipeSteps)
-            let point = CGPoint(
+            return CGPoint(
                 x: start.x + (target.x - start.x) * progress,
                 y: start.y + (target.y - start.y) * progress)
-            let stepDelay = delay + swipeDuration * progress
-            scheduleStep(
-                to: point, generation: generation, delay: stepDelay, isLast: step == swipeSteps)
+        }
+        scheduleStep(points: stepPoints, index: 0, generation: generation)
+    }
+
+    private func scheduleStep(points: [CGPoint], index: Int, generation: Int) {
+        guard let gate = lastDeliveryGate else {
+            return
+        }
+        wait(for: gate, generation: generation) {
+            self.moveStep(points: points, index: index, generation: generation)
         }
     }
 
-    private func scheduleStep(to point: CGPoint, generation: Int, delay: CGFloat, isLast: Bool) {
-        if delay == 0 {
-            moveStep(to: point, generation: generation, isLast: isLast)
-        } else {
-            PlayInput.touchQueue.asyncAfter(
-                deadline: .now() + Double(delay), qos: .userInitiated) {
-                    self.moveStep(to: point, generation: generation, isLast: isLast)
-                }
-        }
-    }
-
-    private func moveStep(to point: CGPoint, generation: Int, isLast: Bool) {
+    private func moveStep(points: [CGPoint], index: Int, generation: Int) {
         guard id != nil,
               moveGeneration == generation else {
             return
         }
+        let point = points[index]
         currentPoint = point
-        Toucher.touchcam(point: point, phase: UITouch.Phase.moved, tid: &id,
-                         actionName: "SwipeGroup", keyName: currentKeyName)
-        if isLast {
+        sendTouch(point: point, phase: .moved, minimumDelay: stepInterval)
+        if index == points.count - 1 {
             animationPending = false
             if pressedOrder.isEmpty {
-                endTouch()
+                scheduleEnd(generation: generation)
             }
+        } else {
+            scheduleStep(points: points, index: index + 1, generation: generation)
         }
     }
 
@@ -422,7 +435,59 @@ class SwipeGroupAction: Action {
         guard !animationPending else {
             return
         }
-        endTouch()
+        scheduleEnd(generation: moveGeneration)
+    }
+
+    private func scheduleEnd(generation: Int) {
+        guard let gate = lastDeliveryGate else {
+            endTouch()
+            return
+        }
+        wait(for: gate, generation: generation) {
+            guard self.pressedOrder.isEmpty else {
+                return
+            }
+            self.endTouch()
+        }
+    }
+
+    private func sendTouch(point: CGPoint, phase: UITouch.Phase, minimumDelay: CGFloat) {
+        let sentAt = DispatchTime.now()
+        Toucher.touchcam(point: point, phase: phase, tid: &id,
+                         actionName: "SwipeGroup", keyName: currentKeyName)
+        // Read after the change: a delivery already in flight may have copied the old state
+        let deliveryCount = PTFakeMetaTouch.deliveryStartCount()
+        lastDeliveryGate = TouchDeliveryGate(
+            deliveryCount: deliveryCount,
+            earliestTime: sentAt + Double(minimumDelay),
+            timeout: sentAt + SwipeGroupAction.deliveryTimeout)
+    }
+
+    private func wait(for gate: TouchDeliveryGate, generation: Int,
+                      lastRequest: DispatchTime? = nil,
+                      completion: @escaping () -> Void) {
+        guard id != nil,
+              moveGeneration == generation else {
+            return
+        }
+        let now = DispatchTime.now()
+        let delivered = PTFakeMetaTouch.deliveryCount() > gate.deliveryCount
+        if now >= gate.earliestTime && (delivered || now >= gate.timeout) {
+            completion()
+            return
+        }
+        var requestedAt = lastRequest ?? gate.earliestTime
+        if !delivered && now >= requestedAt + SwipeGroupAction.redeliveryInterval {
+            // Our change may have landed after the delivery that consumed the signal
+            PTFakeMetaTouch.requestDelivery()
+            requestedAt = now
+        }
+        PlayInput.touchQueue.asyncAfter(
+            deadline: now + SwipeGroupAction.deliveryPollInterval,
+            qos: .userInitiated) {
+                self.wait(for: gate, generation: generation,
+                          lastRequest: requestedAt, completion: completion)
+            }
     }
 
     private func endTouch() {
@@ -431,6 +496,7 @@ class SwipeGroupAction: Action {
         }
         Toucher.touchcam(point: currentPoint, phase: UITouch.Phase.ended, tid: &id,
                          actionName: "SwipeGroup", keyName: currentKeyName)
+        lastDeliveryGate = nil
     }
 
     func invalidate() {

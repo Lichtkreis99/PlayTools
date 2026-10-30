@@ -17,11 +17,15 @@
 
 static NSMutableArray *livingTouchAry;
 atomic_ullong reusageMask = ATOMIC_VAR_INIT(0);
+// Deliveries started / finished, so callers can tell whether a state change has reached the app
+static atomic_ulong deliveryStartCounter = ATOMIC_VAR_INIT(0);
+static atomic_ulong deliveryCounter = ATOMIC_VAR_INIT(0);
 static CFRunLoopSourceRef source;
 
 NSLock *lock;
 
 void eventSendCallback(void* info) {
+    atomic_fetch_add(&deliveryStartCounter, 1);
     UIEvent *event = [[UIApplication sharedApplication] _touchesEvent];
     [event _clearTouches];
     // Step1: copy touches and record began touches and mark recyclable touches
@@ -59,6 +63,7 @@ void eventSendCallback(void* info) {
             }
         }
     }
+    atomic_fetch_add(&deliveryCounter, 1);
 }
 
 @implementation PTFakeMetaTouch
@@ -73,6 +78,19 @@ void eventSendCallback(void* info) {
     source = CFRunLoopSourceCreate(NULL, -2, &context);
     CFRunLoopRef loop = CFRunLoopGetMain();
     CFRunLoopAddSource(loop, source, kCFRunLoopCommonModes);
+}
+
++ (NSUInteger)deliveryCount {
+    return atomic_load(&deliveryCounter);
+}
+
++ (NSUInteger)deliveryStartCount {
+    return atomic_load(&deliveryStartCounter);
+}
+
++ (void)requestDelivery {
+    CFRunLoopSourceSignal(source);
+    CFRunLoopWakeUp(CFRunLoopGetMain());
 }
 
 + (NSInteger)fakeTouchId: (NSInteger)pointId AtPoint: (CGPoint)point withTouchPhase: (UITouchPhase)phase inWindow: (UIWindow*)window onView:(UIView*)view {

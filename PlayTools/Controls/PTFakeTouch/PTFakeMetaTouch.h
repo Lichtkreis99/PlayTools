@@ -26,4 +26,20 @@
 
 + (NSInteger)fakeTouchId:(NSInteger)pointId AtPoint:(CGPoint)point withTouchPhase:(UITouchPhase)phase inWindow:(UIWindow*)window onView:(UIView*)view;
 
+/**
+ *  Number of touch events delivered to UIApplication.
+ */
++ (NSUInteger)deliveryCount;
+
+/**
+ *  Number of touch deliveries that have started. A state change made before reading this
+ *  has reached the app once deliveryCount exceeds the value read.
+ */
++ (NSUInteger)deliveryStartCount;
+
+/**
+ *  Ask the main run loop to deliver the current touch state again.
+ */
++ (void)requestDelivery;
+
 @end
