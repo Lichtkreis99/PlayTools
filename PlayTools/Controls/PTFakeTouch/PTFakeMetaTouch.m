@@ -11,6 +11,7 @@
 #import "UIApplication+Private.h"
 #import "UIEvent+Private.h"
 #import "CoreFoundation/CFRunLoop.h"
+#import <QuartzCore/QuartzCore.h>
 #import <stdatomic.h>
 #include <dlfcn.h>
 #include <string.h>
@@ -20,6 +21,8 @@ atomic_ullong reusageMask = ATOMIC_VAR_INIT(0);
 // Deliveries started / finished, so callers can tell whether a state change has reached the app
 static atomic_ulong deliveryStartCounter = ATOMIC_VAR_INIT(0);
 static atomic_ulong deliveryCounter = ATOMIC_VAR_INIT(0);
+// Main run loop display frames, so callers can let the app see each touch state for whole frames
+static atomic_ulong frameCounter = ATOMIC_VAR_INIT(0);
 static CFRunLoopSourceRef source;
 
 NSLock *lock;
@@ -66,6 +69,15 @@ void eventSendCallback(void* info) {
     atomic_fetch_add(&deliveryCounter, 1);
 }
 
+@interface PTFrameTicker : NSObject
+@end
+
+@implementation PTFrameTicker
+- (void)tick:(CADisplayLink *)link {
+    atomic_fetch_add(&frameCounter, 1);
+}
+@end
+
 @implementation PTFakeMetaTouch
 
 + (void)load {
@@ -78,6 +90,12 @@ void eventSendCallback(void* info) {
     source = CFRunLoopSourceCreate(NULL, -2, &context);
     CFRunLoopRef loop = CFRunLoopGetMain();
     CFRunLoopAddSource(loop, source, kCFRunLoopCommonModes);
+    // Created once the main run loop is running; the display link retains its target
+    dispatch_async(dispatch_get_main_queue(), ^{
+        CADisplayLink *link = [CADisplayLink displayLinkWithTarget:[[PTFrameTicker alloc] init]
+                                                          selector:@selector(tick:)];
+        [link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+    });
 }
 
 + (NSUInteger)deliveryCount {
@@ -86,6 +104,10 @@ void eventSendCallback(void* info) {
 
 + (NSUInteger)deliveryStartCount {
     return atomic_load(&deliveryStartCounter);
+}
+
++ (NSUInteger)frameCount {
+    return atomic_load(&frameCounter);
 }
 
 + (void)requestDelivery {

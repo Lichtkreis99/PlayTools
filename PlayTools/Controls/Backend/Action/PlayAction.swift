@@ -301,8 +301,15 @@ class JoystickAction: Action {
 private struct TouchDeliveryGate {
     // Value of deliveryStartCount right after the change; delivered once deliveryCount exceeds it
     let deliveryCount: UInt
+    // Display frames the app must run after delivery, so it reads this state in its own frame
+    let frames: UInt
     let earliestTime: DispatchTime
     let timeout: DispatchTime
+}
+
+private struct TouchWaitState {
+    var lastRequest: DispatchTime?
+    var deliveredFrame: UInt?
 }
 
 class SwipeGroupAction: Action {
@@ -379,7 +386,7 @@ class SwipeGroupAction: Action {
         if id == nil {
             currentPoint = center
             sendTouch(point: center, phase: .began,
-                      minimumDelay: swipeDelay + stepInterval)
+                      minimumDelay: swipeDelay + stepInterval, frames: 1)
         }
         scheduleMove(to: target, generation: generation)
     }
@@ -420,8 +427,10 @@ class SwipeGroupAction: Action {
         }
         let point = points[index]
         currentPoint = point
-        sendTouch(point: point, phase: .moved, minimumDelay: stepInterval)
-        if index == points.count - 1 {
+        let isLast = index == points.count - 1
+        // Dwell on the target a little longer, so the lift never shares a frame with the arrival
+        sendTouch(point: point, phase: .moved, minimumDelay: stepInterval, frames: isLast ? 2 : 1)
+        if isLast {
             animationPending = false
             if pressedOrder.isEmpty {
                 scheduleEnd(generation: generation)
@@ -451,7 +460,7 @@ class SwipeGroupAction: Action {
         }
     }
 
-    private func sendTouch(point: CGPoint, phase: UITouch.Phase, minimumDelay: CGFloat) {
+    private func sendTouch(point: CGPoint, phase: UITouch.Phase, minimumDelay: CGFloat, frames: UInt) {
         let sentAt = DispatchTime.now()
         Toucher.touchcam(point: point, phase: phase, tid: &id,
                          actionName: "SwipeGroup", keyName: currentKeyName)
@@ -459,12 +468,13 @@ class SwipeGroupAction: Action {
         let deliveryCount = PTFakeMetaTouch.deliveryStartCount()
         lastDeliveryGate = TouchDeliveryGate(
             deliveryCount: deliveryCount,
+            frames: frames,
             earliestTime: sentAt + Double(minimumDelay),
             timeout: sentAt + SwipeGroupAction.deliveryTimeout)
     }
 
     private func wait(for gate: TouchDeliveryGate, generation: Int,
-                      lastRequest: DispatchTime? = nil,
+                      state: TouchWaitState = TouchWaitState(),
                       completion: @escaping () -> Void) {
         guard id != nil,
               moveGeneration == generation else {
@@ -472,21 +482,27 @@ class SwipeGroupAction: Action {
         }
         let now = DispatchTime.now()
         let delivered = PTFakeMetaTouch.deliveryCount() > gate.deliveryCount
-        if now >= gate.earliestTime && (delivered || now >= gate.timeout) {
+        let frame = PTFakeMetaTouch.frameCount()
+        var state = state
+        if delivered && state.deliveredFrame == nil {
+            state.deliveredFrame = frame
+        }
+        // frame == 0 means the display link never started; fall back to delivery alone
+        let framesDone = delivered && (frame == 0 || frame >= (state.deliveredFrame ?? frame) + gate.frames)
+        if now >= gate.earliestTime && (framesDone || now >= gate.timeout) {
             completion()
             return
         }
-        var requestedAt = lastRequest ?? gate.earliestTime
+        let requestedAt = state.lastRequest ?? gate.earliestTime
         if !delivered && now >= requestedAt + SwipeGroupAction.redeliveryInterval {
             // Our change may have landed after the delivery that consumed the signal
             PTFakeMetaTouch.requestDelivery()
-            requestedAt = now
+            state.lastRequest = now
         }
         PlayInput.touchQueue.asyncAfter(
             deadline: now + SwipeGroupAction.deliveryPollInterval,
             qos: .userInitiated) {
-                self.wait(for: gate, generation: generation,
-                          lastRequest: requestedAt, completion: completion)
+                self.wait(for: gate, generation: generation, state: state, completion: completion)
             }
     }
 

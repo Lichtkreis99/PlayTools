@@ -42,4 +42,9 @@
  */
 + (void)requestDelivery;
 
+/**
+ *  Number of display frames the main run loop has run since launch.
+ */
++ (NSUInteger)frameCount;
+
 @end
