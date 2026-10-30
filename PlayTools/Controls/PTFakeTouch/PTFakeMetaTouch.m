@@ -52,6 +52,12 @@ void eventSendCallback(void* info) {
     }];
     [lock unlock];
 
+    // The shared touches event only gets a new timestamp when a real event arrives, so keyboard-only
+    // input would reach the app stamped seconds in the past. Some game modes drop such input.
+    if ([event respondsToSelector:@selector(_setTimestamp:)]) {
+        [event _setTimestamp:[[NSProcessInfo processInfo] systemUptime]];
+    }
+
     // Step2: send event
     [[UIApplication sharedApplication] sendEvent:event];
 

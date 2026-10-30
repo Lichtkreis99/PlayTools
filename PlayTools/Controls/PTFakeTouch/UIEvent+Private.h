@@ -12,5 +12,6 @@
 
 - (void)_addTouch:(UITouch *)touch forDelayedDelivery:(BOOL)delayed;
 - (void)_clearTouches;
+- (void)_setTimestamp:(NSTimeInterval)timestamp;
 
 @end
