@@ -323,12 +323,15 @@ class SwipeGroupAction: Action {
     let swipeDelay: CGFloat
     let swipeDuration: CGFloat
     let swipeSteps: Int
+    let swipeHold: CGFloat
     private var id: Int?
     private var pressedOrder = [Int]()
     private var currentPoint: CGPoint
+    private var currentTarget: CGPoint
+    private var arrivedAt: DispatchTime?
+    private var jitter: CGFloat = 0.5
     private var currentKeyName = "Keyboard"
     private var moveGeneration = 0
-    private var animationPending = false
     private var lastDeliveryGate: TouchDeliveryGate?
 
     init(data: SwipeGroup) {
@@ -344,7 +347,9 @@ class SwipeGroupAction: Action {
         swipeDelay = max(0, data.swipeDelay ?? 0.03)
         swipeDuration = max(0, data.swipeDuration ?? 0.06)
         swipeSteps = max(1, data.swipeSteps ?? 6)
+        swipeHold = max(0, data.swipeHold ?? 0.06)
         currentPoint = center
+        currentTarget = center
 
         for (index, key) in keys.enumerated() {
             let codeName = KeyCodeNames.keyCodes[key.keyCode] ?? key.keyName
@@ -369,18 +374,18 @@ class SwipeGroupAction: Action {
         guard previousIndex != pressedOrder.last else {
             return
         }
+        // With every key released, the resting loop lifts the finger once it has held long enough
         if let targetIndex = pressedOrder.last {
             move(to: targetIndex)
-        } else {
-            liftOff()
         }
     }
 
     private func move(to index: Int) {
         let target = points[index]
+        currentTarget = target
+        arrivedAt = nil
         currentKeyName = keys[index].keyName
         moveGeneration += 1
-        animationPending = true
         let generation = moveGeneration
 
         if id == nil {
@@ -431,33 +436,40 @@ class SwipeGroupAction: Action {
         // Dwell on the target a little longer, so the lift never shares a frame with the arrival
         sendTouch(point: point, phase: .moved, minimumDelay: stepInterval, frames: isLast ? 2 : 1)
         if isLast {
-            animationPending = false
-            if pressedOrder.isEmpty {
-                scheduleEnd(generation: generation)
-            }
+            arrivedAt = DispatchTime.now()
+            scheduleRest(generation: generation)
         } else {
             scheduleStep(points: points, index: index + 1, generation: generation)
         }
     }
 
-    private func liftOff() {
-        guard !animationPending else {
-            return
-        }
-        scheduleEnd(generation: moveGeneration)
-    }
-
-    private func scheduleEnd(generation: Int) {
+    private func scheduleRest(generation: Int) {
         guard let gate = lastDeliveryGate else {
-            endTouch()
             return
         }
         wait(for: gate, generation: generation) {
-            guard self.pressedOrder.isEmpty else {
-                return
-            }
-            self.endTouch()
+            self.rest(generation: generation)
         }
+    }
+
+    // Runs once per frame while the finger sits on its target, until it is lifted or retargeted
+    private func rest(generation: Int) {
+        guard id != nil,
+              moveGeneration == generation else {
+            return
+        }
+        if pressedOrder.isEmpty,
+           let arrived = arrivedAt,
+           DispatchTime.now() >= arrived + Double(swipeHold) {
+            endTouch()
+            return
+        }
+        // A real finger never holds perfectly still. Keep sending moves on the target, so a control
+        // that only starts tracking after an expand animation still learns where the finger is.
+        jitter = -jitter
+        currentPoint = CGPoint(x: currentTarget.x + jitter, y: currentTarget.y)
+        sendTouch(point: currentPoint, phase: .moved, minimumDelay: 0, frames: 1)
+        scheduleRest(generation: generation)
     }
 
     private func sendTouch(point: CGPoint, phase: UITouch.Phase, minimumDelay: CGFloat, frames: UInt) {
@@ -510,7 +522,7 @@ class SwipeGroupAction: Action {
         guard id != nil else {
             return
         }
-        Toucher.touchcam(point: currentPoint, phase: UITouch.Phase.ended, tid: &id,
+        Toucher.touchcam(point: currentTarget, phase: UITouch.Phase.ended, tid: &id,
                          actionName: "SwipeGroup", keyName: currentKeyName)
         lastDeliveryGate = nil
     }
@@ -518,7 +530,6 @@ class SwipeGroupAction: Action {
     func invalidate() {
         pressedOrder.removeAll()
         moveGeneration += 1
-        animationPending = false
         endTouch()
     }
 }

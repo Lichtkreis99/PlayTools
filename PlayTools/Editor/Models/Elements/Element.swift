@@ -62,4 +62,5 @@ struct SwipeGroup: BaseElement {
     var swipeDelay: CGFloat?
     var swipeDuration: CGFloat?
     var swipeSteps: Int?
+    var swipeHold: CGFloat?
 }

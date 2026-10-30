@@ -225,7 +225,8 @@ class EditorController {
                 keys: [],
                 swipeDelay: nil,
                 swipeDuration: nil,
-                swipeSteps: nil
+                swipeSteps: nil,
+                swipeHold: nil
             )))
         }
     }
